@@ -115,6 +115,9 @@ void Zone::SizeWindowToZone(HWND window, HWND zoneWindow) noexcept
         placement.showCmd = SW_RESTORE | SW_SHOWNA;
     }
     ::SetWindowPlacement(window, &placement);
+    // Do it again, allowing Windows to resize the window and set correct scaling
+    // This fixes Issue #365
+    ::SetWindowPlacement(window, &placement);
 }
 
 void Zone::StampZone(HWND window, bool stamp) noexcept
@@ -129,7 +132,7 @@ void Zone::StampZone(HWND window, bool stamp) noexcept
     }
 }
 
-winrt::com_ptr<IZone> MakeZone(RECT zoneRect) noexcept
+winrt::com_ptr<IZone> MakeZone(const RECT& zoneRect) noexcept
 {
     return winrt::make_self<Zone>(zoneRect);
 }

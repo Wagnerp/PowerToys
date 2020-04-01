@@ -2,7 +2,10 @@
 // The Microsoft Corporation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 
 namespace FancyZonesEditor.Models
@@ -11,37 +14,24 @@ namespace FancyZonesEditor.Models
     //  Free form Layout Model, which specifies independent zone rects
     public class CanvasLayoutModel : LayoutModel
     {
-        private static readonly ushort _latestVersion = 0;
-
-        public CanvasLayoutModel(ushort version, string name, ushort id, byte[] data)
-            : base(name, id)
+        public CanvasLayoutModel(string uuid, string name, LayoutType type, int referenceWidth, int referenceHeight, IList<Int32Rect> zones)
+            : base(uuid, name, type)
         {
-            if (version == _latestVersion)
-            {
-                Load(data);
-            }
+            _referenceWidth = referenceWidth;
+            _referenceHeight = referenceHeight;
+            Zones = zones;
         }
 
-        public CanvasLayoutModel(string name, ushort id, int referenceWidth, int referenceHeight)
-            : base(name, id)
+        public CanvasLayoutModel(string name, LayoutType type, int referenceWidth, int referenceHeight)
+        : base(name, type)
         {
             // Initialize Reference Size
             _referenceWidth = referenceWidth;
             _referenceHeight = referenceHeight;
         }
 
-        public CanvasLayoutModel(string name, ushort id)
-            : base(name, id)
-        {
-        }
-
         public CanvasLayoutModel(string name)
             : base(name)
-        {
-        }
-
-        public CanvasLayoutModel()
-            : base()
         {
         }
 
@@ -104,26 +94,6 @@ namespace FancyZonesEditor.Models
             FirePropertyChanged("Zones");
         }
 
-        private void Load(byte[] data)
-        {
-            // Initialize this CanvasLayoutModel based on the given persistence data
-            // Skip version (2 bytes), id (2 bytes), and type (1 bytes)
-            int i = 5;
-            _referenceWidth = (data[i++] * 256) + data[i++];
-            _referenceHeight = (data[i++] * 256) + data[i++];
-
-            int count = data[i++];
-
-            while (count-- > 0)
-            {
-                Zones.Add(new Int32Rect(
-                    (data[i++] * 256) + data[i++],
-                    (data[i++] * 256) + data[i++],
-                    (data[i++] * 256) + data[i++],
-                    (data[i++] * 256) + data[i++]));
-            }
-        }
-
         // Clone
         //  Implements the LayoutModel.Clone abstract method
         //  Clones the data from this CanvasLayoutModel to a new CanvasLayoutModel
@@ -143,44 +113,91 @@ namespace FancyZonesEditor.Models
             return layout;
         }
 
-        // GetPersistData
-        //  Implements the LayoutModel.GetPersistData abstract method
-        //  Returns the state of this GridLayoutModel in persisted format
-        protected override byte[] GetPersistData()
+        public void RestoreTo(CanvasLayoutModel other)
         {
-            byte[] data = new byte[10 + (Zones.Count * 8)];
-            int i = 0;
-
-            // Common persisted values between all layout types
-            data[i++] = (byte)(_latestVersion / 256);
-            data[i++] = (byte)(_latestVersion % 256);
-            data[i++] = 1; // LayoutModelType: 1 == CanvasLayoutModel
-            data[i++] = (byte)(Id / 256);
-            data[i++] = (byte)(Id % 256);
-
-            // End common
-            data[i++] = (byte)(_referenceWidth / 256);
-            data[i++] = (byte)(_referenceWidth % 256);
-            data[i++] = (byte)(_referenceHeight / 256);
-            data[i++] = (byte)(_referenceHeight % 256);
-            data[i++] = (byte)Zones.Count;
-
-            foreach (Int32Rect rect in Zones)
+            other.Zones.Clear();
+            foreach (Int32Rect zone in Zones)
             {
-                data[i++] = (byte)(rect.X / 256);
-                data[i++] = (byte)(rect.X % 256);
+                other.Zones.Add(zone);
+            }
+        }
 
-                data[i++] = (byte)(rect.Y / 256);
-                data[i++] = (byte)(rect.Y % 256);
+        private struct Zone
+        {
+            public int X { get; set; }
 
-                data[i++] = (byte)(rect.Width / 256);
-                data[i++] = (byte)(rect.Width % 256);
+            public int Y { get; set; }
 
-                data[i++] = (byte)(rect.Height / 256);
-                data[i++] = (byte)(rect.Height % 256);
+            public int Width { get; set; }
+
+            public int Height { get; set; }
+        }
+
+        private struct CanvasLayoutInfo
+        {
+            public int RefWidth { get; set; }
+
+            public int RefHeight { get; set; }
+
+            public Zone[] Zones { get; set; }
+        }
+
+        private struct CanvasLayoutJson
+        {
+            public string Uuid { get; set; }
+
+            public string Name { get; set; }
+
+            public string Type { get; set; }
+
+            public CanvasLayoutInfo Info { get; set; }
+        }
+
+        // PersistData
+        // Implements the LayoutModel.PersistData abstract method
+        protected override void PersistData()
+        {
+            CanvasLayoutInfo layoutInfo = new CanvasLayoutInfo
+            {
+                RefWidth = _referenceWidth,
+                RefHeight = _referenceHeight,
+                Zones = new Zone[Zones.Count],
+            };
+            for (int i = 0; i < Zones.Count; ++i)
+            {
+                Zone zone = new Zone
+                {
+                    X = Zones[i].X,
+                    Y = Zones[i].Y,
+                    Width = Zones[i].Width,
+                    Height = Zones[i].Height,
+                };
+
+                layoutInfo.Zones[i] = zone;
             }
 
-            return data;
+            CanvasLayoutJson jsonObj = new CanvasLayoutJson
+            {
+                Uuid = "{" + Guid.ToString().ToUpper() + "}",
+                Name = Name,
+                Type = "canvas",
+                Info = layoutInfo,
+            };
+
+            JsonSerializerOptions options = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = new DashCaseNamingPolicy(),
+            };
+
+            try
+            {
+                string jsonString = JsonSerializer.Serialize(jsonObj, options);
+                File.WriteAllText(Settings.AppliedZoneSetTmpFile, jsonString);
+            }
+            catch (Exception ex)
+            {
+                ShowExceptionMessageBox("Error persisting canvas layout", ex);
+            }
         }
     }
 }

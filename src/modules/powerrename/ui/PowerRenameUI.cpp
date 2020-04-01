@@ -1,11 +1,14 @@
 #include "stdafx.h"
 #include "resource.h"
 #include "PowerRenameUI.h"
+#include "dpi_aware.h"
 #include <commctrl.h>
 #include <Shlobj.h>
 #include <helpers.h>
 #include <settings.h>
 #include <windowsx.h>
+#include <thread>
+#include <trace.h>
 
 extern HINSTANCE g_hInst;
 
@@ -76,8 +79,6 @@ inline int RECT_HEIGHT(RECT& r)
 {
     return r.bottom - r.top;
 }
-
-#define MAX_INPUT_STRING_LEN 1024
 
 // IUnknown
 IFACEMETHODIMP CPowerRenameUI::QueryInterface(__in REFIID riid, __deref_out void** ppv)
@@ -391,7 +392,7 @@ HRESULT CPowerRenameUI::_ReadSettings()
         flags = CSettings::GetFlags();
         m_spsrm->put_flags(flags);
 
-        wchar_t buffer[MAX_INPUT_STRING_LEN];
+        wchar_t buffer[CSettings::MAX_INPUT_STRING_LEN];
         buffer[0] = L'\0';
         CSettings::GetSearchText(buffer, ARRAYSIZE(buffer));
         SetDlgItemText(m_hwnd, IDC_EDIT_SEARCHFOR, buffer);
@@ -419,7 +420,7 @@ HRESULT CPowerRenameUI::_WriteSettings()
         m_spsrm->get_flags(&flags);
         CSettings::SetFlags(flags);
 
-        wchar_t buffer[MAX_INPUT_STRING_LEN];
+        wchar_t buffer[CSettings::MAX_INPUT_STRING_LEN];
         buffer[0] = L'\0';
         GetDlgItemText(m_hwnd, IDC_EDIT_SEARCHFOR, buffer, ARRAYSIZE(buffer));
         CSettings::SetSearchText(buffer);
@@ -445,6 +446,8 @@ HRESULT CPowerRenameUI::_WriteSettings()
                 spReplaceMRU->AddMRUString(buffer);
             }
         }
+
+        Trace::SettingsChanged();
     }
 
     return S_OK;
@@ -511,6 +514,12 @@ HRESULT CPowerRenameUI::_DoModal(__in_opt HWND hwnd)
     }
     return hr;
 }
+void CPowerRenameUI::BecomeForegroundWindow()
+{
+    static INPUT i = { INPUT_MOUSE, {} };
+    SendInput(1, &i, sizeof(i));
+    SetForegroundWindow(m_hwnd);
+}
 
 HRESULT CPowerRenameUI::_DoModeless(__in_opt HWND hwnd)
 {
@@ -519,6 +528,7 @@ HRESULT CPowerRenameUI::_DoModeless(__in_opt HWND hwnd)
     if (NULL != CreateDialogParam(g_hInst, MAKEINTRESOURCE(IDD_MAIN), hwnd, s_DlgProc, (LPARAM)this))
     {
         ShowWindow(m_hwnd, SW_SHOWNORMAL);
+        BecomeForegroundWindow();
         MSG msg;
         while (GetMessage(&msg, NULL, 0, 0))
         {
@@ -617,8 +627,14 @@ void CPowerRenameUI::_OnInitDlg()
     GetWindowRect(m_hwnd, &rc);
     m_initialWidth = RECT_WIDTH(rc);
     m_initialHeight = RECT_HEIGHT(rc);
-    m_lastWidth = m_initialWidth;
-    m_lastHeight = m_initialHeight;
+
+    UINT dummy = 0;
+    DPIAware::GetScreenDPIForWindow(m_hwnd, m_initialDPI, dummy);
+
+    for (UINT u = 0; u < ARRAYSIZE(g_repositionMap); u++)
+    {
+        _CollectItemPosition(g_repositionMap[u].id);
+    }
 
     _InitAutoComplete();
 
@@ -637,16 +653,16 @@ void CPowerRenameUI::_OnCommand(_In_ WPARAM wParam, _In_ LPARAM lParam)
     switch (LOWORD(wParam))
     {
     case IDOK:
-    case IDCANCEL:
-        _OnCloseDlg();
-        break;
-
     case ID_RENAME:
         _OnRename();
         break;
 
     case ID_ABOUT:
         _OnAbout();
+        break;
+
+    case IDCANCEL:
+        _OnCloseDlg();
         break;
 
     case IDC_EDIT_REPLACEWITH:
@@ -750,25 +766,16 @@ void CPowerRenameUI::_OnSize(_In_ WPARAM wParam)
 {
     if ((wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) && m_initialWidth)
     {
-        // Calculate window size change delta
-        RECT rc = { 0 };
-        GetWindowRect(m_hwnd, &rc);
-
-        const int xDelta = RECT_WIDTH(rc) - m_lastWidth;
-        m_lastWidth += xDelta;
-        const int yDelta = RECT_HEIGHT(rc) - m_lastHeight;
-        m_lastHeight += yDelta;
-
         for (UINT u = 0; u < ARRAYSIZE(g_repositionMap); u++)
         {
-            _MoveControl(g_repositionMap[u].id, g_repositionMap[u].flags, xDelta, yDelta);
+            _MoveControl(g_repositionMap[u].id, g_repositionMap[u].flags);
         }
 
         m_listview.OnSize();
     }
 }
 
-void CPowerRenameUI::_MoveControl(_In_ DWORD id, _In_ DWORD repositionFlags, _In_ int xDelta, _In_ int yDelta)
+void CPowerRenameUI::_MoveControl(_In_ DWORD id, _In_ DWORD repositionFlags)
 {
     HWND hwnd = GetDlgItem(m_hwnd, id);
 
@@ -782,40 +789,57 @@ void CPowerRenameUI::_MoveControl(_In_ DWORD id, _In_ DWORD repositionFlags, _In
     {
         flags |= SWP_NOSIZE;
     }
+    RECT rc = { 0 };
+    GetWindowRect(m_hwnd, &rc);
+    int mainWindowWidth = rc.right - rc.left;
+    int mainWindowHeight = rc.bottom - rc.top;
 
     RECT rcWindow = { 0 };
     GetWindowRect(hwnd, &rcWindow);
-
-    int cx = RECT_WIDTH(rcWindow);
-    int cy = RECT_HEIGHT(rcWindow);
-
     MapWindowPoints(HWND_DESKTOP, GetParent(hwnd), (LPPOINT)&rcWindow, 2);
-
     int x = rcWindow.left;
     int y = rcWindow.top;
+    int width = rcWindow.right - rcWindow.left;
+    int height = rcWindow.bottom - rcWindow.top;
 
-    if (repositionFlags & Reposition_X)
+    UINT currentDPI = 0, dummy;
+    DPIAware::GetScreenDPIForWindow(m_hwnd, currentDPI, dummy);
+    float scale = (float)currentDPI / m_initialDPI;
+
+    switch (id)
     {
-        x += xDelta;
+    case IDC_EDIT_SEARCHFOR:
+    case IDC_EDIT_REPLACEWITH:
+        width = mainWindowWidth - static_cast<int>(m_itemsPositioning.searchReplaceWidthDiff * scale);
+        break;
+    case IDC_PREVIEWGROUP:
+        height = mainWindowHeight - static_cast<int>(m_itemsPositioning.previewGroupHeightDiff * scale);
+    case IDC_SEARCHREPLACEGROUP:
+    case IDC_OPTIONSGROUP:
+        width = mainWindowWidth - static_cast<int>(m_itemsPositioning.groupsWidthDiff * scale);
+        break;
+    case IDC_LIST_PREVIEW:
+        width = mainWindowWidth - static_cast<int>(m_itemsPositioning.listPreviewWidthDiff * scale);
+        height = mainWindowHeight - static_cast<int>(m_itemsPositioning.listPreviewHeightDiff * scale);
+        break;
+    case IDC_STATUS_MESSAGE:
+        y = mainWindowHeight - static_cast<int>(m_itemsPositioning.statusMessageYDiff * scale);
+        break;
+    case ID_RENAME:
+        x = mainWindowWidth - static_cast<int>(m_itemsPositioning.renameButtonXDiff * scale);
+        y = mainWindowHeight - static_cast<int>(m_itemsPositioning.renameButtonYDiff * scale);
+        break;
+    case ID_ABOUT:
+        x = mainWindowWidth - static_cast<int>(m_itemsPositioning.helpButtonXDiff * scale);
+        y = mainWindowHeight - static_cast<int>(m_itemsPositioning.helpButtonYDiff * scale);
+        break;
+    case IDCANCEL:
+        x = mainWindowWidth - static_cast<int>(m_itemsPositioning.cancelButtonXDiff * scale);
+        y = mainWindowHeight - static_cast<int>(m_itemsPositioning.cancelButtonYDiff * scale);
+        break;
     }
 
-    if (repositionFlags & Reposition_Y)
-    {
-        y += yDelta;
-    }
-
-    if (repositionFlags & Reposition_Width)
-    {
-        cx += xDelta;
-    }
-
-    if (repositionFlags & Reposition_Height)
-    {
-        cy += yDelta;
-    }
-
-    SetWindowPos(hwnd, NULL, x, y, cx, cy, flags);
-
+    SetWindowPos(hwnd, NULL, x, y, width, height, flags);
     RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE);
 }
 
@@ -825,7 +849,7 @@ void CPowerRenameUI::_OnSearchReplaceChanged()
     CComPtr<IPowerRenameRegEx> spRegEx;
     if (m_spsrm && SUCCEEDED(m_spsrm->get_renameRegEx(&spRegEx)))
     {
-        wchar_t buffer[MAX_INPUT_STRING_LEN];
+        wchar_t buffer[CSettings::MAX_INPUT_STRING_LEN];
         buffer[0] = L'\0';
         GetDlgItemText(m_hwnd, IDC_EDIT_SEARCHFOR, buffer, ARRAYSIZE(buffer));
         spRegEx->put_searchTerm(buffer);
@@ -915,6 +939,51 @@ void CPowerRenameUI::_UpdateCounts()
 
         // Update Rename button state
         EnableWindow(GetDlgItem(m_hwnd, ID_RENAME), (renamingCount > 0));
+    }
+}
+
+void CPowerRenameUI::_CollectItemPosition(_In_ DWORD id)
+{
+    HWND hwnd = GetDlgItem(m_hwnd, id);
+    RECT rcWindow = { 0 };
+    GetWindowRect(hwnd, &rcWindow);
+
+    MapWindowPoints(HWND_DESKTOP, GetParent(hwnd), (LPPOINT)&rcWindow, 2);
+    int itemWidth = rcWindow.right - rcWindow.left;
+    int itemHeight = rcWindow.bottom - rcWindow.top;
+
+    switch (id)
+    {
+    case IDC_EDIT_SEARCHFOR:
+    /* IDC_EDIT_REPLACEWITH uses same value*/
+        m_itemsPositioning.searchReplaceWidthDiff = m_initialWidth - itemWidth;
+        break;
+    case IDC_PREVIEWGROUP:
+        m_itemsPositioning.previewGroupHeightDiff = m_initialHeight - itemHeight;
+        break;
+    case IDC_SEARCHREPLACEGROUP:
+    /* IDC_OPTIONSGROUP uses same value */
+        m_itemsPositioning.groupsWidthDiff = m_initialWidth - itemWidth;
+        break;
+    case IDC_LIST_PREVIEW:
+        m_itemsPositioning.listPreviewWidthDiff = m_initialWidth - itemWidth;
+        m_itemsPositioning.listPreviewHeightDiff = m_initialHeight - itemHeight;
+        break;
+    case IDC_STATUS_MESSAGE:
+        m_itemsPositioning.statusMessageYDiff = m_initialHeight - rcWindow.top;
+        break;
+    case ID_RENAME:
+        m_itemsPositioning.renameButtonXDiff = m_initialWidth - rcWindow.left;
+        m_itemsPositioning.renameButtonYDiff = m_initialHeight - rcWindow.top;
+        break;
+    case ID_ABOUT:
+        m_itemsPositioning.helpButtonXDiff = m_initialWidth - rcWindow.left;
+        m_itemsPositioning.helpButtonYDiff = m_initialHeight - rcWindow.top;
+        break;
+    case IDCANCEL:
+        m_itemsPositioning.cancelButtonXDiff = m_initialWidth - rcWindow.left;
+        m_itemsPositioning.cancelButtonYDiff = m_initialHeight - rcWindow.top;
+        break;
     }
 }
 

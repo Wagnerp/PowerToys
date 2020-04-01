@@ -1,4 +1,5 @@
 #pragma once
+#define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #pragma push_macro("GetCurrentTime")
 #undef GetCurrentTime
@@ -15,3 +16,4 @@
 #pragma pop_macro("GetCurrentTime")
 #include <strsafe.h>
 #include <Shlwapi.h>
+#include <ProjectTelemetry.h>

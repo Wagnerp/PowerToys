@@ -77,6 +77,22 @@ public:
     static HRESULT s_CreateInstance(_In_ IPowerRenameManager* psrm, _In_opt_ IUnknown* dataSource, _In_ bool enableDragDrop, _Outptr_ IPowerRenameUI** ppsrui);
 
 private:
+    struct DialogItemsPositioning
+    {
+        int groupsWidthDiff;
+        int previewGroupHeightDiff;
+        int searchReplaceWidthDiff;
+        int listPreviewWidthDiff;
+        int listPreviewHeightDiff;
+        int statusMessageYDiff;
+        int renameButtonXDiff;
+        int renameButtonYDiff;
+        int helpButtonXDiff;
+        int helpButtonYDiff;
+        int cancelButtonXDiff;
+        int cancelButtonYDiff;
+    };
+
     ~CPowerRenameUI()
     {
         DeleteObject(m_iconMain);
@@ -86,6 +102,7 @@ private:
 
     HRESULT _DoModal(__in_opt HWND hwnd);
     HRESULT _DoModeless(__in_opt HWND hwnd);
+    void BecomeForegroundWindow();
 
     static INT_PTR CALLBACK s_DlgProc(HWND hdlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     {
@@ -114,7 +131,7 @@ private:
     void _OnCloseDlg();
     void _OnDestroyDlg();
     void _OnSearchReplaceChanged();
-    void _MoveControl(_In_ DWORD id, _In_ DWORD repositionFlags, _In_ int xDelta, _In_ int yDelta);
+    void _MoveControl(_In_ DWORD id, _In_ DWORD repositionFlags);
 
     HRESULT _ReadSettings();
     HRESULT _WriteSettings();
@@ -125,6 +142,8 @@ private:
 
     void _EnumerateItems(_In_ IUnknown* pdtobj);
     void _UpdateCounts();
+
+    void _CollectItemPosition(_In_ DWORD id);
 
     long m_refCount = 0;
     bool m_initialized = false;
@@ -138,6 +157,8 @@ private:
     DWORD m_currentRegExId = 0;
     UINT m_selectedCount = 0;
     UINT m_renamingCount = 0;
+    UINT m_initialDPI = 0;
+    DialogItemsPositioning m_itemsPositioning {};
     int m_initialWidth = 0;
     int m_initialHeight = 0;
     int m_lastWidth = 0;

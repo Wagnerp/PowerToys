@@ -4,7 +4,8 @@
 #include <settings.h>
 #include <trace.h>
 #include <common/settings_objects.h>
-
+#include <common/common.h>
+#include "resource.h"
 #include <atomic>
 
 std::atomic<DWORD> g_dwModuleRefCount = 0;
@@ -58,16 +59,13 @@ public:
         {
             hr = CLASS_E_NOAGGREGATION;
         }
+        else if (m_clsid == CLSID_PowerRenameMenu)
+        {
+            hr = CPowerRenameMenu::s_CreateInstance(punkOuter, riid, ppv);
+        }
         else
         {
-            if (m_clsid == CLSID_PowerRenameMenu)
-            {
-                hr = CPowerRenameMenu::s_CreateInstance(punkOuter, riid, ppv);
-            }
-            else
-            {
-                hr = CLASS_E_CLASSNOTAVAILABLE;
-            }
+            hr = CLASS_E_CLASSNOTAVAILABLE;
         }
         return hr;
     }
@@ -125,13 +123,9 @@ STDAPI DllCanUnloadNow(void)
 STDAPI DllGetClassObject(_In_ REFCLSID clsid, _In_ REFIID riid, _Outptr_ void** ppv)
 {
     *ppv = NULL;
-    HRESULT hr = E_OUTOFMEMORY;
     CPowerRenameClassFactory* pClassFactory = new CPowerRenameClassFactory(clsid);
-    if (pClassFactory)
-    {
-        hr = pClassFactory->QueryInterface(riid, ppv);
-        pClassFactory->Release();
-    }
+    HRESULT hr = pClassFactory->QueryInterface(riid, ppv);
+    pClassFactory->Release();
     return hr;
 }
 
@@ -160,12 +154,13 @@ class PowerRenameModule : public PowertoyModuleIface
 private:
     // Enabled by default
     bool m_enabled = true;
+    std::wstring app_name;
 
 public:
     // Return the display name of the powertoy, this will be cached
     virtual PCWSTR get_name() override
     {
-        return L"PowerRename";
+        return app_name.c_str();
     }
 
     // Enable the powertoy
@@ -203,25 +198,25 @@ public:
 
         // Create a Settings object.
         PowerToysSettings::Settings settings(hinstance, get_name());
-        settings.set_description(L"A Windows Shell Extension for more advanced bulk renaming using search and replace or regular expressions.");
+        settings.set_description(GET_RESOURCE_STRING(IDS_SETTINGS_DESCRIPTION));
         settings.set_icon_key(L"pt-power-rename");
 
         // Link to the GitHub PowerRename sub-page
-        settings.set_overview_link(L"https://github.com/microsoft/PowerToys/tree/master/src/modules/powerrename");
+        settings.set_overview_link(GET_RESOURCE_STRING(IDS_OVERVIEW_LINK));
 
         settings.add_bool_toogle(
             L"bool_persist_input",
-            L"Restore search, replace and flags values on launch from previous run.",
+            GET_RESOURCE_STRING(IDS_RESTORE_SEARCH),
             CSettings::GetPersistState());
 
         settings.add_bool_toogle(
             L"bool_mru_enabled",
-            L"Enable autocomplete and autosuggest of recently used inputs for search and replace values.",
+            GET_RESOURCE_STRING(IDS_ENABLE_AUTO),
             CSettings::GetMRUEnabled());
 
         settings.add_int_spinner(
             L"int_max_mru_size",
-            L"Maximum number of items to show in recently used list for autocomplete dropdown.",
+            GET_RESOURCE_STRING(IDS_MAX_ITEMS),
             CSettings::GetMaxMRUSize(),
             0,
             20,
@@ -229,12 +224,12 @@ public:
 
         settings.add_bool_toogle(
             L"bool_show_icon_on_menu",
-            L"Show icon on context menu.",
+            GET_RESOURCE_STRING(IDS_ICON_CONTEXT_MENU),
             CSettings::GetShowIconOnMenu());
 
         settings.add_bool_toogle(
             L"bool_show_extended_menu",
-            L"Only show the PowerRename menu item on the extended context menu (SHIFT + Right-click).",
+            GET_RESOURCE_STRING(IDS_EXTENDED_MENU_INFO),
             CSettings::GetExtendedContextMenuOnly());
 
         return settings.serialize_to_buffer(buffer, buffer_size);
@@ -255,6 +250,8 @@ public:
             CSettings::SetMaxMRUSize(values.get_int_value(L"int_max_mru_size").value());
             CSettings::SetShowIconOnMenu(values.get_bool_value(L"bool_show_icon_on_menu").value());
             CSettings::SetExtendedContextMenuOnly(values.get_bool_value(L"bool_show_extended_menu").value());
+
+            Trace::SettingsChanged();
         }
         catch (std::exception)
         {
@@ -298,7 +295,10 @@ public:
     PowerRenameModule()
     {
         init_settings();
+        app_name = GET_RESOURCE_STRING(IDS_POWERRENAME_APP_NAME);
     }
+
+    ~PowerRenameModule(){};
 };
 
 extern "C" __declspec(dllexport) PowertoyModuleIface* __cdecl powertoy_create()

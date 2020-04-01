@@ -48,10 +48,12 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
     <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\modules\</OutDir>
+    <IntDir>$(SolutionDir)$(Platform)\$(Configuration)\obj\$(ProjectName)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\modules\</OutDir>
+    <IntDir>$(SolutionDir)$(Platform)\$(Configuration)\obj\$(ProjectName)\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -71,7 +73,6 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <AdditionalDependencies>gdiplus.lib;dwmapi.lib;shlwapi.lib;uxtheme.lib;shcore.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>fancyzones.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -96,7 +97,6 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
       <AdditionalDependencies>gdiplus.lib;dwmapi.lib;shlwapi.lib;uxtheme.lib;shcore.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>fancyzones.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -121,7 +121,6 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <None Include="fancyzones.def" />
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>

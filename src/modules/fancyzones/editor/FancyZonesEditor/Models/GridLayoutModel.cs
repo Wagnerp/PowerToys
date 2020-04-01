@@ -2,7 +2,11 @@
 // The Microsoft Corporation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text.Json;
+using System.Windows;
 
 namespace FancyZonesEditor.Models
 {
@@ -10,8 +14,6 @@ namespace FancyZonesEditor.Models
     //  Grid-styled Layout Model, which specifies rows, columns, percentage sizes, and row/column spans
     public class GridLayoutModel : LayoutModel
     {
-        private static readonly ushort _latestVersion = 0;
-
         // Rows - number of rows in the Grid
         public int Rows
         {
@@ -78,18 +80,19 @@ namespace FancyZonesEditor.Models
         {
         }
 
-        public GridLayoutModel(string name, ushort id)
-            : base(name, id)
+        public GridLayoutModel(string name, LayoutType type)
+            : base(name, type)
         {
         }
 
-        public GridLayoutModel(ushort version, string name, ushort id, byte[] data)
-            : base(name, id)
+        public GridLayoutModel(string uuid, string name, LayoutType type, int rows, int cols, int[] rowPercents, int[] colsPercents, int[,] cellChildMap)
+            : base(uuid, name, type)
         {
-            if (version == _latestVersion)
-            {
-                Reload(data);
-            }
+            _rows = rows;
+            _cols = cols;
+            RowPercents = rowPercents;
+            ColumnPercents = colsPercents;
+            CellChildMap = cellChildMap;
         }
 
         public void Reload(byte[] data)
@@ -128,6 +131,12 @@ namespace FancyZonesEditor.Models
         public override LayoutModel Clone()
         {
             GridLayoutModel layout = new GridLayoutModel(Name);
+            RestoreTo(layout);
+            return layout;
+        }
+
+        public void RestoreTo(GridLayoutModel layout)
+        {
             int rows = Rows;
             int cols = Columns;
 
@@ -160,88 +169,74 @@ namespace FancyZonesEditor.Models
             }
 
             layout.ColumnPercents = colPercents;
-
-            return layout;
         }
 
-        // GetPersistData
-        //  Implements the LayoutModel.GetPersistData abstract method
-        //  Returns the state of this GridLayoutModel in persisted format
-        protected override byte[] GetPersistData()
+        private struct GridLayoutInfo
         {
-            int rows = Rows;
-            int cols = Columns;
+            public int Rows { get; set; }
 
-            int[,] cellChildMap;
+            public int Columns { get; set; }
 
-            if (FreeZones.Count == 0)
+            public int[] RowsPercentage { get; set; }
+
+            public int[] ColumnsPercentage { get; set; }
+
+            public int[][] CellChildMap { get; set; }
+        }
+
+        private struct GridLayoutJson
+        {
+            public string Uuid { get; set; }
+
+            public string Name { get; set; }
+
+            public string Type { get; set; }
+
+            public GridLayoutInfo Info { get; set; }
+        }
+
+        // PersistData
+        // Implements the LayoutModel.PersistData abstract method
+        protected override void PersistData()
+        {
+            GridLayoutInfo layoutInfo = new GridLayoutInfo
             {
-                // no unused indices -- so we can just use the _cellChildMap as is
-                cellChildMap = CellChildMap;
-            }
-            else
-            {
-                // compress cellChildMap to not have gaps for unused child indices;
-                List<int> mapping = new List<int>();
-
-                cellChildMap = new int[rows, cols];
-
-                for (int row = 0; row < rows; row++)
-                {
-                    for (int col = 0; col < cols; col++)
-                    {
-                        int source = CellChildMap[row, col];
-
-                        int index = mapping.IndexOf(source);
-                        if (index == -1)
-                        {
-                            index = mapping.Count;
-                            mapping.Add(source);
-                        }
-
-                        cellChildMap[row, col] = index;
-                    }
-                }
-            }
-
-            byte[] data = new byte[7 + (Rows * 2) + (Columns * 2) + (Rows * Columns)];
-
-            int i = 0;
-
-            // Common persisted values between all layout types
-            data[i++] = (byte)(_latestVersion / 256);
-            data[i++] = (byte)(_latestVersion % 256);
-            data[i++] = 0; // LayoutModelType: 0 == GridLayoutModel
-            data[i++] = (byte)(Id / 256);
-            data[i++] = (byte)(Id % 256);
-
-            // End common
-            data[i++] = (byte)Rows;
-            data[i++] = (byte)Columns;
-
+                Rows = Rows,
+                Columns = Columns,
+                RowsPercentage = RowPercents,
+                ColumnsPercentage = ColumnPercents,
+                CellChildMap = new int[Rows][],
+            };
             for (int row = 0; row < Rows; row++)
             {
-                int rowPercent = RowPercents[row];
-                data[i++] = (byte)(rowPercent / 256);
-                data[i++] = (byte)(rowPercent % 256);
-            }
-
-            for (int col = 0; col < Columns; col++)
-            {
-                int colPercent = ColumnPercents[col];
-                data[i++] = (byte)(colPercent / 256);
-                data[i++] = (byte)(colPercent % 256);
-            }
-
-            for (int row = 0; row < Rows; row++)
-            {
+                layoutInfo.CellChildMap[row] = new int[Columns];
                 for (int col = 0; col < Columns; col++)
                 {
-                    data[i++] = (byte)cellChildMap[row, col];
+                    layoutInfo.CellChildMap[row][col] = CellChildMap[row, col];
                 }
             }
 
-            return data;
+            GridLayoutJson jsonObj = new GridLayoutJson
+            {
+                Uuid = "{" + Guid.ToString().ToUpper() + "}",
+                Name = Name,
+                Type = "grid",
+                Info = layoutInfo,
+            };
+            JsonSerializerOptions options = new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = new DashCaseNamingPolicy(),
+            };
+
+            try
+            {
+                string jsonString = JsonSerializer.Serialize(jsonObj, options);
+                File.WriteAllText(Settings.AppliedZoneSetTmpFile, jsonString);
+            }
+            catch (Exception ex)
+            {
+                ShowExceptionMessageBox("Error persisting grid layout", ex);
+            }
         }
     }
 }
