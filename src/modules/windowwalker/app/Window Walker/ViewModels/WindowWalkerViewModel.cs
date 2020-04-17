@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Interop;
-using Microsoft.Win32;
+
 using WindowWalker.Components;
 using WindowWalker.MVVMHelpers;
 
@@ -17,8 +17,7 @@ namespace WindowWalker.ViewModels
         private readonly HotKeyHandler _hotKeyHandler;
         private readonly List<string> _hints = new List<string>()
         {
-            "search for running processes ...",
-            // "you can reinvoke this app using CTRL + WIN",
+            "search for running processes or windows...",
         };
 
         private string _searchText = string.Empty;

@@ -68,14 +68,14 @@ namespace WindowWalker
                     viewModel.WindowHideCommand.Execute(null);
                 }
             }
-            else if (e.Key == Key.Down)
+            else if (e.Key == Key.Down || (e.Key == Key.Tab && Keyboard.Modifiers != ModifierKeys.Shift))
             {
                 if (viewModel.WindowNavigateToNextResultCommand.CanExecute(null))
                 {
                     viewModel.WindowNavigateToNextResultCommand.Execute(null);
                 }
             }
-            else if (e.Key == Key.Up)
+            else if (e.Key == Key.Up || (e.Key == Key.Tab && Keyboard.Modifiers == ModifierKeys.Shift))
             {
                 if (viewModel.WindowNavigateToPreviousResultCommand.CanExecute(null))
                 {
@@ -113,6 +113,11 @@ namespace WindowWalker
             {
                 viewModel.WindowHideCommand.Execute(null);
             }
+        }
+
+        private void Window_GotFocus(object sender, RoutedEventArgs e)
+        {
+            searchBox.Focus();
         }
     }
 }

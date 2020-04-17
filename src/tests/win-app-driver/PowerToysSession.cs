@@ -13,32 +13,26 @@ namespace PowerToysTests
     public class PowerToysSession
     {
         protected const string WindowsApplicationDriverUrl = "http://127.0.0.1:4723";
+        protected const string AppPath = "C:\\Program Files\\PowerToys\\PowerToys.exe";
+        
         protected static WindowsDriver<WindowsElement> session;
         protected static bool isPowerToysLaunched = false;
         protected static WindowsElement trayButton;
 
-        protected static string _settingsFolderPath = "";
-        protected static string _settingsPath = ""; 
-        protected static string _zoneSettingsPath = "";
+        protected static string _settingsFolderPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft\\PowerToys\\FancyZones");
+        protected static string _settingsPath = _settingsFolderPath + "\\settings.json"; 
+        protected static string _zoneSettingsPath = _settingsFolderPath + "\\zones-settings.json";
+
         protected static string _initialSettings = "";
         protected static string _initialZoneSettings = "";
 
+        protected const string _defaultSettings = "{\"version\":\"1.0\",\"name\":\"FancyZones\",\"properties\":{\"fancyzones_shiftDrag\":{\"value\":true},\"fancyzones_overrideSnapHotkeys\":{\"value\":false},\"fancyzones_zoneSetChange_flashZones\":{\"value\":false},\"fancyzones_displayChange_moveWindows\":{\"value\":false},\"fancyzones_zoneSetChange_moveWindows\":{\"value\":false},\"fancyzones_virtualDesktopChange_moveWindows\":{\"value\":false},\"fancyzones_appLastZone_moveWindows\":{\"value\":false},\"use_cursorpos_editor_startupscreen\":{\"value\":true},\"fancyzones_zoneHighlightColor\":{\"value\":\"#0078D7\"},\"fancyzones_highlight_opacity\":{\"value\":90},\"fancyzones_editor_hotkey\":{\"value\":{\"win\":true,\"ctrl\":false,\"alt\":false,\"shift\":false,\"code\":192,\"key\":\"`\"}},\"fancyzones_excluded_apps\":{\"value\":\"\"}}}";
+        protected const string _defaultZoneSettings = "{\"app-zone-history\":[],\"devices\":[],\"custom-zone-sets\":[]}";
+            
+
         public static void Setup(TestContext context, bool isLaunchRequired = true)
         {
-            //read settings before running tests to restore them after
-            _settingsFolderPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft\\PowerToys\\FancyZones");
-            _settingsPath = _settingsFolderPath + "\\settings.json";
-            _zoneSettingsPath = _settingsFolderPath + "\\zones-settings.json";
-            try
-            {
-                _initialSettings = File.ReadAllText(_settingsPath);
-                _initialZoneSettings = File.ReadAllText(_zoneSettingsPath);
-            }
-            catch(Exception)
-            {
-                //failed to read settings
-            }
-            
+            ReadUserSettings(); //read settings before running tests to restore them after
 
             if (session == null)
             {
@@ -57,29 +51,11 @@ namespace PowerToysTests
                     LaunchPowerToys();
                 }
             }
-
         }
 
         public static void TearDown()
         {
-            //restore initial settings files
-            if (_initialSettings.Length > 0)
-            {
-                File.WriteAllText(_settingsPath, _initialSettings);
-            }
-            else
-            {
-                File.Delete(_settingsPath);
-            }
-
-            if (_initialZoneSettings.Length > 0)
-            {
-                File.WriteAllText(_zoneSettingsPath, _initialZoneSettings);
-            }
-            else
-            {
-                File.Delete(_zoneSettingsPath);
-            }
+            RestoreUserSettings(); //restore initial settings files
 
             if (session != null)
             {
@@ -93,13 +69,26 @@ namespace PowerToysTests
             Thread.Sleep(TimeSpan.FromSeconds(seconds));
         }
 
-        public static void ShortWait()
+        //Trying to find element by XPath
+        protected static WindowsElement WaitElementByName(string name, double maxTime = 10)
         {
-            Thread.Sleep(TimeSpan.FromSeconds(0.5));
+            WindowsElement result = null;
+            Stopwatch timer = new Stopwatch();
+            timer.Start();
+            while (timer.Elapsed < TimeSpan.FromSeconds(maxTime))
+            {
+                try
+                {
+                    result = session.FindElementByName(name);
+                }
+                catch { }
+                return result;
+            }
+            return null;
         }
 
         //Trying to find element by XPath
-        protected WindowsElement WaitElementByXPath(string xPath, double maxTime = 10)
+        protected static WindowsElement WaitElementByXPath(string xPath, double maxTime = 10)
         {
             WindowsElement result = null;
             Stopwatch timer = new Stopwatch();
@@ -111,17 +100,13 @@ namespace PowerToysTests
                     result = session.FindElementByXPath(xPath);
                 }
                 catch { }
-                if (result != null)
-                {
-                    return result;
-                }
+                return result;
             }
-            Assert.IsNotNull(result);
             return null;
         }
 
         //Trying to find element by AccessibilityId
-        protected WindowsElement WaitElementByAccessibilityId(string accessibilityId, double maxTime = 10)
+        protected static WindowsElement WaitElementByAccessibilityId(string accessibilityId, double maxTime = 10)
         {
             WindowsElement result = null;
             Stopwatch timer = new Stopwatch();
@@ -133,12 +118,8 @@ namespace PowerToysTests
                     result = session.FindElementByAccessibilityId(accessibilityId);
                 }
                 catch { }
-                if (result != null)
-                {
-                    return result;
-                }
+                return result;
             }
-            Assert.IsNotNull(result);
             return null;
         }
 
@@ -151,13 +132,11 @@ namespace PowerToysTests
 
         public static void OpenFancyZonesSettings()
         {
-            WindowsElement fzNavigationButton = session.FindElementByXPath("//Button[@Name=\"FancyZones\"]");
+            WindowsElement fzNavigationButton = WaitElementByXPath("//Button[@Name=\"FancyZones\"]");
             Assert.IsNotNull(fzNavigationButton);
 
             fzNavigationButton.Click();
             fzNavigationButton.Click();
-
-            ShortWait();
         }
 
         public static void CloseSettings()
@@ -183,7 +162,7 @@ namespace PowerToysTests
 
             try
             {
-                WindowsElement pt = session.FindElementByXPath("//Button[@Name=\"PowerToys\"]");
+                WindowsElement pt = WaitElementByXPath("//Button[@Name=\"PowerToys\"]");
                 isLaunched = (pt != null);
             }
             catch(OpenQA.Selenium.WebDriverException)
@@ -201,8 +180,8 @@ namespace PowerToysTests
             {
                 AppiumOptions opts = new AppiumOptions();
                 opts.PlatformName = "Windows";
-                opts.AddAdditionalCapability("app", "Microsoft.PowerToys_8wekyb3d8bbwe!PowerToys");
-                
+                opts.AddAdditionalCapability("app", AppPath);
+
                 WindowsDriver<WindowsElement> driver = new WindowsDriver<WindowsElement>(new Uri(WindowsApplicationDriverUrl), opts);
                 Assert.IsNotNull(driver);
                 driver.LaunchApp();
@@ -219,50 +198,84 @@ namespace PowerToysTests
         public static void ExitPowerToys()
         {
             trayButton.Click();
-            ShortWait();
 
-            WindowsElement pt = session.FindElementByXPath("//Button[@Name=\"PowerToys\"]");
+            WindowsElement pt = WaitElementByXPath("//Button[@Name=\"PowerToys\"]");
+            Assert.IsNotNull(pt, "Couldn't find \'PowerToys\' button");
             new Actions(session).MoveToElement(pt).ContextClick().Perform();
-            ShortWait();
-
-            session.FindElementByXPath("//MenuItem[@Name=\"Exit\"]").Click();
+            
+            WaitElementByXPath("//MenuItem[@Name=\"Exit\"]").Click();
             trayButton.Click(); //close tray
             isPowerToysLaunched = false;
         }
 
         public static void ResetDefaultFancyZonesSettings(bool relaunch)
         {
-            if (!Directory.Exists(_settingsFolderPath))
-            {
-                Directory.CreateDirectory(_settingsFolderPath);
-            }
+            ResetSettings(_settingsFolderPath, _settingsPath, _defaultSettings, relaunch);
+        }
 
-            string settings = "{\"version\":\"1.0\",\"name\":\"FancyZones\",\"properties\":{\"fancyzones_shiftDrag\":{\"value\":true},\"fancyzones_overrideSnapHotkeys\":{\"value\":false},\"fancyzones_zoneSetChange_flashZones\":{\"value\":false},\"fancyzones_displayChange_moveWindows\":{\"value\":false},\"fancyzones_zoneSetChange_moveWindows\":{\"value\":false},\"fancyzones_virtualDesktopChange_moveWindows\":{\"value\":false},\"fancyzones_appLastZone_moveWindows\":{\"value\":false},\"use_cursorpos_editor_startupscreen\":{\"value\":true},\"fancyzones_zoneHighlightColor\":{\"value\":\"#0078D7\"},\"fancyzones_highlight_opacity\":{\"value\":90},\"fancyzones_editor_hotkey\":{\"value\":{\"win\":true,\"ctrl\":false,\"alt\":false,\"shift\":false,\"code\":192,\"key\":\"`\"}},\"fancyzones_excluded_apps\":{\"value\":\"\"}}}";
-            File.WriteAllText(_settingsPath, settings);
+        public static void ResetDefautZoneSettings(bool relaunch)
+        {
+            ResetSettings(_settingsFolderPath, _zoneSettingsPath, _defaultZoneSettings, relaunch);
+        }
+
+        private static void ResetSettings(string folder, string filePath, string data, bool relaunch)
+        {
+            if (!Directory.Exists(folder))
+            {
+                Directory.CreateDirectory(folder);
+            }
+            File.WriteAllText(filePath, data);
 
             if (isPowerToysLaunched)
             {
                 ExitPowerToys();
             }
-            
+
             if (relaunch)
             {
                 LaunchPowerToys();
             }
         }
 
-        public static void ResetDefautZoneSettings(bool relaunch)
+        private static void ReadUserSettings()
         {
-            string zoneSettings = "{\"app-zone-history\":[],\"devices\":[],\"custom-zone-sets\":[]}";
-            File.WriteAllText(_zoneSettingsPath, zoneSettings);
-
-            if (isPowerToysLaunched)
+            try
             {
-                ExitPowerToys();
+                _initialSettings = File.ReadAllText(_settingsPath);
             }
-            if (relaunch)
+            catch (Exception)
             {
-                LaunchPowerToys();
+                //failed to read settings
+            }
+
+            try
+            {
+                _initialZoneSettings = File.ReadAllText(_zoneSettingsPath);
+            }
+            catch (Exception)
+            {
+                //failed to read settings
+            }
+        }
+
+        private static void RestoreUserSettings()
+        {
+            if (_initialSettings.Length > 0)
+            {
+                File.WriteAllText(_settingsPath, _initialSettings);
+            }
+            else
+            {
+                File.Delete(_settingsPath);
+            }
+
+            if (_initialZoneSettings.Length > 0)
+            {
+                File.WriteAllText(_zoneSettingsPath, _initialZoneSettings);
+            }
+            else
+            {
+                File.Delete(_zoneSettingsPath);
             }
         }
     }

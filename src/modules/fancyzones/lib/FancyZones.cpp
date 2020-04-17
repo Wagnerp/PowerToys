@@ -150,6 +150,7 @@ public:
     void AddZoneWindow(HMONITOR monitor, PCWSTR deviceId) noexcept;
 
     void MoveWindowIntoZoneByIndex(HWND window, HMONITOR monitor, int index) noexcept;
+    void MoveWindowIntoZoneByIndexSet(HWND window, HMONITOR monitor, const std::vector<int>& indexSet) noexcept;
 
 protected:
     static LRESULT CALLBACK s_WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
@@ -180,6 +181,7 @@ private:
     };
 
     bool IsInterestingWindow(HWND window) noexcept;
+    bool IsCursorTypeIndicatingSizeEvent();
     void UpdateZoneWindows() noexcept;
     void MoveWindowsOnDisplayChange() noexcept;
     void UpdateDragState(HWND window, require_write_lock) noexcept;
@@ -437,9 +439,6 @@ void FancyZones::ToggleEditor() noexcept
     HMONITOR monitor{};
     HWND foregroundWindow{};
 
-    UINT dpi_x = DPIAware::DEFAULT_DPI;
-    UINT dpi_y = DPIAware::DEFAULT_DPI;
-
     const bool use_cursorpos_editor_startupscreen = m_settings->GetSettings()->use_cursorpos_editor_startupscreen;
     POINT currentCursorPos{};
     if (use_cursorpos_editor_startupscreen)
@@ -473,24 +472,14 @@ void FancyZones::ToggleEditor() noexcept
                       } })
         .wait();
 
-    if (use_cursorpos_editor_startupscreen)
-    {
-        DPIAware::GetScreenDPIForPoint(currentCursorPos, dpi_x, dpi_y);
-    }
-    else
-    {
-        DPIAware::GetScreenDPIForWindow(foregroundWindow, dpi_x, dpi_y);
-    }
-
     auto zoneWindow = iter->second;
 
     const auto& fancyZonesData = JSONHelpers::FancyZonesDataInstance();
     fancyZonesData.CustomZoneSetsToJsonFile(ZoneWindowUtils::GetCustomZoneSetsTmpPath());
 
-    const auto taskbar_x_offset = MulDiv(mi.rcWork.left - mi.rcMonitor.left, DPIAware::DEFAULT_DPI, dpi_x);
-    const auto taskbar_y_offset = MulDiv(mi.rcWork.top - mi.rcMonitor.top, DPIAware::DEFAULT_DPI, dpi_y);
-
     // Do not scale window params by the dpi, that will be done in the editor - see LayoutModel.Apply
+    const auto taskbar_x_offset = mi.rcWork.left - mi.rcMonitor.left;
+    const auto taskbar_y_offset = mi.rcWork.top - mi.rcMonitor.top;
     const auto x = mi.rcMonitor.left + taskbar_x_offset;
     const auto y = mi.rcMonitor.top + taskbar_y_offset;
     const auto width = mi.rcWork.right - mi.rcWork.left;
@@ -692,7 +681,7 @@ void FancyZones::AddZoneWindow(HMONITOR monitor, PCWSTR deviceId) noexcept
         //const bool flash = m_settings->GetSettings()->zoneSetChange_flashZones && newWorkArea;
         const bool flash = false;
 
-        auto zoneWindow = MakeZoneWindow(this, m_hinstance, monitor, uniqueId, flash);
+        auto zoneWindow = MakeZoneWindow(this, m_hinstance, monitor, uniqueId, flash, newWorkArea);
         if (zoneWindow)
         {
             m_zoneWindowMap[monitor] = std::move(zoneWindow);
@@ -709,6 +698,12 @@ void FancyZones::AddZoneWindow(HMONITOR monitor, PCWSTR deviceId) noexcept
 void FancyZones::MoveWindowIntoZoneByIndex(HWND window, HMONITOR monitor, int index) noexcept
 {
     std::shared_lock readLock(m_lock);
+    MoveWindowIntoZoneByIndexSet(window, monitor, { index });
+}
+
+void FancyZones::MoveWindowIntoZoneByIndexSet(HWND window, HMONITOR monitor, const std::vector<int>& indexSet) noexcept
+{
+    std::shared_lock readLock(m_lock);
     if (window != m_windowMoveSize)
     {
         const HMONITOR hm = (monitor != nullptr) ? monitor : MonitorFromWindow(window, MONITOR_DEFAULTTONULL);
@@ -718,7 +713,7 @@ void FancyZones::MoveWindowIntoZoneByIndex(HWND window, HMONITOR monitor, int in
             if (zoneWindow != m_zoneWindowMap.end())
             {
                 const auto& zoneWindowPtr = zoneWindow->second;
-                zoneWindowPtr->MoveWindowIntoZoneByIndex(window, index);
+                zoneWindowPtr->MoveWindowIntoZoneByIndexSet(window, indexSet);
             }
         }
     }
@@ -756,6 +751,33 @@ bool FancyZones::IsInterestingWindow(HWND window) noexcept
         }
     }
     return true;
+}
+
+bool FancyZones::IsCursorTypeIndicatingSizeEvent()
+{
+    CURSORINFO cursorInfo = { 0 };
+    cursorInfo.cbSize = sizeof(cursorInfo);
+
+    if (::GetCursorInfo(&cursorInfo))
+    {
+        if (::LoadCursor(NULL, IDC_SIZENS) == cursorInfo.hCursor)
+        {
+            return true;
+        }
+        if (::LoadCursor(NULL, IDC_SIZEWE) == cursorInfo.hCursor)
+        {
+            return true;
+        }
+        if (::LoadCursor(NULL, IDC_SIZENESW) == cursorInfo.hCursor)
+        {
+            return true;
+        }
+        if (::LoadCursor(NULL, IDC_SIZENWSE) == cursorInfo.hCursor)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void FancyZones::UpdateZoneWindows() noexcept
@@ -845,10 +867,8 @@ void FancyZones::UpdateDragState(HWND window, require_write_lock) noexcept
         m_dragEnabled = !(shift | mouse);
     }
 
-    const bool windowElevated = IsProcessOfWindowElevated(window);
-    static const bool meElevated = is_process_elevated();
     static bool warning_shown = false;
-    if (windowElevated && !meElevated)
+    if (!is_process_elevated() && IsProcessOfWindowElevated(window))
     {
         m_dragEnabled = false;
         if (!warning_shown && !is_cant_drag_elevated_warning_disabled())
@@ -933,23 +953,10 @@ bool FancyZones::OnSnapHotkey(DWORD vkCode) noexcept
 
 void FancyZones::MoveSizeStartInternal(HWND window, HMONITOR monitor, POINT const& ptScreen, require_write_lock writeLock) noexcept
 {
-    // Only enter move/size if the cursor is inside the window rect by a certain padding.
-    // This prevents resize from triggering zones.
-    RECT windowRect{};
-    ::GetWindowRect(window, &windowRect);
-
-    const auto padding_x = 8;
-    const auto padding_y = 6;
-    windowRect.top += padding_y;
-    windowRect.left += padding_x;
-    windowRect.right -= padding_x;
-    windowRect.bottom -= padding_y;
-
-    if (PtInRect(&windowRect, ptScreen) == FALSE)
+    if (IsCursorTypeIndicatingSizeEvent())
     {
         return;
     }
-
     m_inMoveSize = true;
 
     auto iter = m_zoneWindowMap.find(monitor);

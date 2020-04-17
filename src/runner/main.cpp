@@ -32,6 +32,8 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 namespace localized_strings
 {
     const wchar_t MSI_VERSION_IS_ALREADY_RUNNING[] = L"An older version of PowerToys is already running.";
+    const wchar_t OLDER_MSIX_UNINSTALLED[] = L"An older MSIX version of PowerToys was uninstalled.";
+
     const wchar_t GITHUB_NEW_VERSION_AVAILABLE_OFFER_VISIT[] = L"An update to PowerToys is available. Visit our GitHub page to get ";
     const wchar_t GITHUB_NEW_VERSION_AGREE[] = L"Visit";
 }
@@ -147,12 +149,11 @@ void github_update_checking_worker()
         state.save();
     }
 }
-void alert_already_running()
+
+void open_menu_from_another_instance()
 {
-    MessageBoxW(nullptr,
-                GET_RESOURCE_STRING(IDS_ANOTHER_INSTANCE_RUNNING).c_str(),
-                GET_RESOURCE_STRING(IDS_POWERTOYS).c_str(),
-                MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+    HWND hwnd_main = FindWindow(L"PToyTrayIconWindow", NULL);
+    PostMessage(hwnd_main, WM_COMMAND, ID_SETTINGS_MENU_COMMAND, NULL);
 }
 
 int runner(bool isProcessElevated)
@@ -179,6 +180,16 @@ int runner(bool isProcessElevated)
             std::thread{ [] {
                 start_msi_uninstallation_sequence();
             } }.detach();
+        }
+        else
+        {
+            std::thread{[] {
+                if(uninstall_previous_msix_version_async().get())
+                {
+                    notifications::show_toast(localized_strings::OLDER_MSIX_UNINSTALLED);
+                }
+            }}.detach();
+            
         }
 
         notifications::register_background_toast_handler();
@@ -308,7 +319,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (!msix_mutex)
         {
             // The MSIX version is already running.
-            alert_already_running();
+            open_menu_from_another_instance();
             return 0;
         }
 
@@ -325,7 +336,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 msi_mutex = create_msi_mutex();
                 if (!msi_mutex)
                 {
-                    alert_already_running();
+                    open_menu_from_another_instance();
                     return 0;
                 }
             }
@@ -343,7 +354,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (!msi_mutex)
         {
             // The MSI version is already running.
-            alert_already_running();
+            open_menu_from_another_instance();
             return 0;
         }
 
@@ -354,7 +365,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (!msix_mutex)
         {
             // The MSIX version is already running.
-            alert_already_running();
+            open_menu_from_another_instance();
             return 0;
         }
         else
