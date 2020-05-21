@@ -5,7 +5,6 @@
 #include "ZoneWindow.h"
 #include "trace.h"
 #include "util.h"
-#include "RegistryHelpers.h"
 
 #include <ShellScalingApi.h>
 #include <mutex>
@@ -234,6 +233,8 @@ public:
     ShowZoneWindow() noexcept;
     IFACEMETHODIMP_(void)
     HideZoneWindow() noexcept;
+    IFACEMETHODIMP_(void)
+    UpdateActiveZoneSet() noexcept;
 
 protected:
     static LRESULT CALLBACK s_WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) noexcept;
@@ -292,8 +293,6 @@ ZoneWindow::ZoneWindow(HINSTANCE hinstance)
 
 ZoneWindow::~ZoneWindow()
 {
-    RestoreOrginalTransparency();
-
     Gdiplus::GdiplusShutdown(gdiplusToken);
 }
 
@@ -354,8 +353,6 @@ IFACEMETHODIMP ZoneWindow::MoveSizeEnter(HWND window, bool dragEnabled) noexcept
 
     if (m_host->isMakeDraggedWindowTransparentActive())
     {
-        RestoreOrginalTransparency();
-
         draggedWindowExstyle = GetWindowLong(window, GWL_EXSTYLE);
 
         draggedWindow = window;
@@ -504,23 +501,32 @@ ZoneWindow::SaveWindowProcessToZoneIndex(HWND window) noexcept
 IFACEMETHODIMP_(void)
 ZoneWindow::ShowZoneWindow() noexcept
 {
-    if (m_window)
+    auto window = m_window.get();
+    if (!window)
     {
-        m_flashMode = false;
-
-        UINT flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE;
-
-        HWND windowInsertAfter = m_windowMoveSize;
-        if (windowInsertAfter == nullptr)
-        {
-            windowInsertAfter = HWND_TOPMOST;
-        }
-
-        SetWindowPos(m_window.get(), windowInsertAfter, 0, 0, 0, 0, flags);
-
-        AnimateWindow(m_window.get(), m_showAnimationDuration, AW_BLEND);
-        InvalidateRect(m_window.get(), nullptr, true);
+        return;
     }
+
+    m_flashMode = false;
+
+    UINT flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE;
+
+    HWND windowInsertAfter = m_windowMoveSize;
+    if (windowInsertAfter == nullptr)
+    {
+        windowInsertAfter = HWND_TOPMOST;
+    }
+
+    SetWindowPos(window, windowInsertAfter, 0, 0, 0, 0, flags);
+
+    std::thread{ [=]() {
+        AnimateWindow(window, m_showAnimationDuration, AW_BLEND);
+        InvalidateRect(window, nullptr, true);
+        if (m_windowMoveSize == nullptr)
+        {
+            HideZoneWindow();
+        }
+    } }.detach();
 }
 
 IFACEMETHODIMP_(void)
@@ -534,6 +540,12 @@ ZoneWindow::HideZoneWindow() noexcept
         m_drawHints = false;
         m_highlightZone = {};
     }
+}
+
+IFACEMETHODIMP_(void)
+ZoneWindow::UpdateActiveZoneSet() noexcept
+{
+    CalculateZoneSet();
 }
 
 #pragma region private
